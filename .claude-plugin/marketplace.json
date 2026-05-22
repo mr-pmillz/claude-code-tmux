@@ -1,0 +1,17 @@
+{
+  "name": "claude-code-tmux",
+  "owner": {
+    "name": "mr-pmillz"
+  },
+  "metadata": {
+    "description": "Tmux integration plugins for Claude Code.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "claude-code-tmux",
+      "source": "./",
+      "description": "Flash the tmux window status when Claude Code is waiting on your input, and clear it when you respond."
+    }
+  ]
+}

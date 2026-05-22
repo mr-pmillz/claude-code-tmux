@@ -1,0 +1,12 @@
+{
+  "name": "claude-code-tmux",
+  "version": "0.1.0",
+  "description": "Flash the tmux window status when Claude Code is waiting on your input, and clear it when you respond. Includes a tmux monitor-bell so the bell flag appears in your status bar.",
+  "author": {
+    "name": "mr-pmillz"
+  },
+  "homepage": "https://github.com/mr-pmillz/claude-code-tmux",
+  "repository": "https://github.com/mr-pmillz/claude-code-tmux",
+  "license": "MIT",
+  "keywords": ["tmux", "notification", "hooks", "claude-code"]
+}

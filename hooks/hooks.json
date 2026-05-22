@@ -1,0 +1,27 @@
+{
+  "description": "Flash the tmux window when Claude needs attention; clear on user reply.",
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/flash-on.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/flash-off.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
