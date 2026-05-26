@@ -17,9 +17,27 @@ When you submit your next prompt (`UserPromptSubmit`), it unsets both options an
 
 ## Install
 
-### Option A — Marketplace (recommended)
+### Option A — Install from Claude Code (recommended)
 
-Add to `~/.claude/settings.json`:
+From inside a Claude Code session, add this repo as a marketplace and install the plugin:
+
+```text
+/plugin marketplace add mr-pmillz/claude-code-tmux
+/plugin install claude-code-tmux@claude-code-tmux
+```
+
+Or do it interactively:
+
+1. Run `/plugin marketplace add mr-pmillz/claude-code-tmux` to register the marketplace.
+2. Run `/plugin` and pick **claude-code-tmux** from the browser to install / enable it.
+
+To update later, run `/plugin marketplace update claude-code-tmux`. To remove it, run `/plugin uninstall claude-code-tmux@claude-code-tmux`.
+
+> The hooks attach to new Claude Code sessions, so once the plugin is enabled, your next session inside tmux will flash on `Notification` events automatically.
+
+### Option B — Edit settings.json directly
+
+If you'd rather wire the marketplace up by hand, add this to `~/.claude/settings.json`:
 
 ```jsonc
 {
@@ -39,15 +57,18 @@ Add to `~/.claude/settings.json`:
 
 Then restart Claude Code (or run `/plugin` and enable the plugin from the menu).
 
-### Option B — Clone and reference locally
+### Option C — Clone and reference locally
 
 ```bash
 git clone https://github.com/mr-pmillz/claude-code-tmux ~/.claude/plugins/claude-code-tmux
 ```
 
-Then add the marketplace + enable lines from Option A, pointing your marketplace source at the local path instead of github.
+Then either:
 
-### Option C — Copy the hooks into your existing settings.json
+- Run `/plugin marketplace add ~/.claude/plugins/claude-code-tmux` followed by `/plugin install claude-code-tmux@claude-code-tmux`, or
+- Add the marketplace + enable lines from Option B, pointing the marketplace `source` at the local path instead of github.
+
+### Option D — Copy the hooks into your existing settings.json
 
 If you don't want a plugin at all, just splice these into your `~/.claude/settings.json` under `hooks`:
 
