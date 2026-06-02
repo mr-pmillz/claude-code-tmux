@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Tmux integration plugins for Claude Code.",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {
       "name": "claude-code-tmux",
       "source": "./",
-      "description": "Flash the tmux window status when Claude Code is waiting on your input, and clear it when you respond."
+      "description": "Flash the tmux window status when Claude Code is waiting on your input, alert the other session you're viewing when an unseen session needs you, and clear it when you respond."
     }
   ]
 }
