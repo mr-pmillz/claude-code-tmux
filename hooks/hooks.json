@@ -1,5 +1,5 @@
 {
-  "description": "Flash the tmux window when Claude needs attention; clear on user reply.",
+  "description": "Flash the tmux window when Claude needs attention; clear on your reply and at the end of every turn.",
   "hooks": {
     "Notification": [
       {
@@ -13,6 +13,17 @@
       }
     ],
     "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/flash-off.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
       {
         "matcher": "*",
         "hooks": [

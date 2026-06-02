@@ -1,7 +1,7 @@
 {
   "name": "claude-code-tmux",
-  "version": "0.2.0",
-  "description": "Flash the tmux window status when Claude Code is waiting on your input, and alert the other tmux session you're currently viewing when an unseen session needs you. Clears when you respond.",
+  "version": "0.3.0",
+  "description": "Flash the tmux window status when Claude Code is waiting on your input, and badge the other tmux session you're currently viewing when an unseen session needs you. Self-healing: clears when you respond and at the end of every turn, and never overrides your themed status bar.",
   "author": {
     "name": "mr-pmillz"
   },

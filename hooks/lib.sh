@@ -4,19 +4,25 @@
 # Two layers of "Claude needs you" signalling:
 #   1. Window flash  — restyle the tmux *window* holding the Claude pane.
 #                      Visible from other windows of the SAME session.
-#   2. Cross-session — restyle the *status bar* of every OTHER session that
-#                      is currently being viewed, so a session you can see
-#                      tells you another session (that you can't) is waiting.
+#   2. Cross-session — prepend a small, non-destructive *badge* to the
+#                      status-right of every OTHER session, so a session you
+#                      can see tells you another session (that you can't) is
+#                      waiting. It never touches status-style, so your themed
+#                      bar stays intact, and the original status-right is saved
+#                      for an exact restore.
 #
-# Layer 2 is reconciled from a small state dir of "waiting pane" markers, so
-# it stays correct when several sessions wait at once: answering one session
-# only clears the alert when no other session is still waiting.
+# Layer 2 is reconciled from a small state dir of "waiting pane" markers, so it
+# stays correct when several sessions wait at once: answering one session only
+# clears the alert when no other session is still waiting. Markers are cleared
+# on UserPromptSubmit *and* Stop (the end of every Claude turn), so a pane you
+# are actively working in can never stay flagged across turns and deadlock the
+# bars. Markers for vanished panes are reaped automatically.
 #
 # Configuration (env vars):
-#   CLAUDE_TMUX_FLASH_STYLE    Window flash style.      Default: bg=red,fg=white,bold
-#   CLAUDE_TMUX_REMOTE_STYLE   Other-session bar style. Default: $CLAUDE_TMUX_FLASH_STYLE
-#   CLAUDE_TMUX_FLASH_BELL     Set 0 to suppress bells. Default: 1
-#   CLAUDE_TMUX_CROSS_SESSION  Set 0 to disable layer 2. Default: 1
+#   CLAUDE_TMUX_FLASH_STYLE    Window flash style.        Default: bg=red,fg=white,bold
+#   CLAUDE_TMUX_REMOTE_STYLE   Other-session badge style. Default: $CLAUDE_TMUX_FLASH_STYLE
+#   CLAUDE_TMUX_FLASH_BELL     Set 0 to suppress bells.   Default: 1
+#   CLAUDE_TMUX_CROSS_SESSION  Set 0 to disable layer 2.  Default: 1
 #   CLAUDE_TMUX_STATE_DIR      Override state dir location (mainly for tests).
 #   CLAUDE_TMUX_SOCKET         Run tmux against `-L <name>` (mainly for tests).
 
@@ -40,10 +46,21 @@ cct_session_of_pane() {
   cct_tmux display-message -t "$1" -p '#{session_id}' 2>/dev/null
 }
 
+cct_session_name() {
+  cct_tmux display-message -t "$1" -p '#{session_name}' 2>/dev/null
+}
+
 # Turn a tmux id ($3, %5, @1) into a filename-safe token. Pane and session ids
 # live in separate dirs, so the collapse of the leading sigil is harmless.
 cct_token() {
   printf '%s' "$1" | tr -c 'A-Za-z0-9' '_'
+}
+
+# Strip characters tmux would interpret as format expansions (#[...], #(...),
+# #{...}) plus newlines/tabs, so an odd or hostile session name can't corrupt
+# the status line or our tab-delimited state files.
+cct_sanitize() {
+  printf '%s' "$1" | tr -d '#' | tr -d '\n\r\t'
 }
 
 # --- state dir --------------------------------------------------------------
@@ -88,28 +105,60 @@ cct_unmark_waiting() {
   rm -f "$(cct_state_dir)/panes/$(cct_token "$TMUX_PANE")" 2>/dev/null || true
 }
 
-# Echo "<had_override>\t<value>": whether this session had its OWN status-style
+# Echo "<had_override>\t<value>": whether this session has its OWN status-right
 # (a session-scoped override, as opposed to inheriting the global), and that
 # override's value. `show-options -t <session>` prints nothing when the option
-# is only inherited, so an empty line means "no override -> restore by unset".
-cct_capture_status_style() {
-  if [ -n "$(cct_tmux show-options -t "$1" status-style 2>/dev/null)" ]; then
-    printf '1\t%s' "$(cct_tmux show-options -t "$1" -v status-style 2>/dev/null)"
+# is only inherited, so an empty result means "no override -> restore by unset".
+cct_capture_status_right() {
+  if [ -n "$(cct_tmux show-options -t "$1" status-right 2>/dev/null)" ]; then
+    printf '1\t%s' "$(cct_tmux show-options -t "$1" -v status-right 2>/dev/null)"
   else
     printf '0\t'
   fi
 }
 
-# Recompute every session's cross-session indicator from the marker set.
+# The status-right a session would show WITHOUT our badge: its own saved
+# override ($1=1), else the live global default. We always rebuild the badged
+# value from this baseline, never off the already-badged current value, so the
+# badge never stacks and its label can refresh as the waiting set changes.
+cct_base_status_right() {
+  if [ "$1" = 1 ]; then
+    printf '%s' "$2"
+  else
+    cct_tmux show-options -gv status-right 2>/dev/null
+  fi
+}
+
+# A compact, themed badge to prepend to a session's status-right. The trailing
+# "#[default] " resets styling so the original status-right renders normally.
+cct_badge() {
+  local style="${CLAUDE_TMUX_REMOTE_STYLE:-${CLAUDE_TMUX_FLASH_STYLE:-bg=red,fg=white,bold}}"
+  printf '#[%s] ⚠ %s #[default] ' "$style" "$1"
+}
+
+# Human label for the OTHER waiting sessions (their ids on $1, newline-separated):
+# the session name when one waits, "<n> waiting" when several do.
+cct_alert_label() {
+  local ids n first
+  ids="$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$')"
+  n="$(printf '%s\n' "$ids" | grep -c .)"
+  if [ "${n:-0}" -le 1 ]; then
+    first="$(printf '%s\n' "$ids" | head -n1)"
+    printf '%s' "$(cct_sanitize "$(cct_session_name "$first")")"
+  else
+    printf '%s waiting' "$n"
+  fi
+}
+
+# Recompute every session's cross-session badge from the marker set.
 # Idempotent: safe to call on every hook event.
 cct_reconcile() {
   cct_have_tmux || return 0
   [ "${CLAUDE_TMUX_CROSS_SESSION:-1}" = "1" ] || return 0
 
-  local root panes flags remote_style
+  local root panes flags
   root="$(cct_state_dir)"; panes="$root/panes"; flags="$root/flagged"
   mkdir -p "$panes" "$flags" 2>/dev/null || return 0
-  remote_style="${CLAUDE_TMUX_REMOTE_STYLE:-${CLAUDE_TMUX_FLASH_STYLE:-bg=red,fg=white,bold}}"
 
   # Serialize concurrent hooks so two sessions can't race on capture/restore.
   if command -v flock >/dev/null 2>&1 && exec 9>"$root/.lock"; then
@@ -136,24 +185,34 @@ cct_reconcile() {
                 for f in "$flags"/*; do [ -e "$f" ] || continue; cut -f1 "$f" 2>/dev/null; done
               } | grep -v '^[[:space:]]*$' | sort -u )"
 
-  local others desired flagfile differs value
+  local others desired flagfile had saved base label
   while IFS= read -r sid; do
     [ -n "$sid" ] || continue
     others="$(printf '%s\n' "$waiting_sids" | grep -vxF -e "$sid" | grep -v '^[[:space:]]*$')"
     desired=0; [ -n "$others" ] && desired=1
     flagfile="$flags/$(cct_token "$sid")"
 
-    if [ "$desired" = 1 ] && [ ! -e "$flagfile" ] && printf '%s\n' "$present" | grep -qxF -e "$sid"; then
-      # Newly needs the alert: save sid + current style, then apply.
-      printf '%s\t%s\n' "$sid" "$(cct_capture_status_style "$sid")" >"$flagfile" 2>/dev/null || true
-      cct_tmux set-option -t "$sid" status-style "$remote_style" 2>/dev/null || true
+    if [ "$desired" = 1 ] && printf '%s\n' "$present" | grep -qxF -e "$sid"; then
+      # Save the pre-badge baseline once, on the 0->1 transition.
+      if [ ! -e "$flagfile" ]; then
+        printf '%s\t%s\n' "$sid" "$(cct_capture_status_right "$sid")" >"$flagfile" 2>/dev/null || true
+      fi
+      # Never badge a session whose baseline we couldn't persist — otherwise we
+      # could apply a badge we have no saved value to restore from later.
+      [ -e "$flagfile" ] || continue
+      # Rebuild the badged value from the SAVED baseline every reconcile, so the
+      # label stays current and the badge never stacks onto itself.
+      IFS=$'\t' read -r _sid had saved <"$flagfile"
+      base="$(cct_base_status_right "$had" "$saved")"
+      label="$(cct_alert_label "$others")"
+      cct_tmux set-option -t "$sid" status-right "$(cct_badge "$label")$base" 2>/dev/null || true
     elif [ "$desired" = 0 ] && [ -e "$flagfile" ]; then
       # No longer needs it: restore whatever was there before.
-      IFS=$'\t' read -r _sid differs value <"$flagfile"
-      if [ "$differs" = 1 ]; then
-        cct_tmux set-option -t "$sid" status-style "$value" 2>/dev/null || true
+      IFS=$'\t' read -r _sid had saved <"$flagfile"
+      if [ "$had" = 1 ]; then
+        cct_tmux set-option -t "$sid" status-right "$saved" 2>/dev/null || true
       else
-        cct_tmux set-option -u -t "$sid" status-style 2>/dev/null || true
+        cct_tmux set-option -u -t "$sid" status-right 2>/dev/null || true
       fi
       rm -f "$flagfile" 2>/dev/null || true
     fi

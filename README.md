@@ -10,9 +10,9 @@ When Claude Code fires a `Notification` event (it wants permission, is idle wait
 
 **1. The window (same session).** Sets `window-status-style` on the tmux window containing the Claude pane to a bright, attention-grabbing style (default: `bg=red,fg=white,bold`) so the window jumps out in your tmux status bar, and turns on `monitor-bell` + emits a bell so the bell flag (`#`) shows up.
 
-**2. The other session you're actually looking at (cross-session).** If Claude is waiting in a session you *can't* see, the plugin restyles the status bar of every **other** session you're attached to, and sends that session an immediate bell + a `Claude needs input in <session>:<window>` status message. So when you're heads-down in session `A` and Claude in session `B` needs you, session `A`'s bar tells you.
+**2. The other session you're actually looking at (cross-session).** If Claude is waiting in a session you *can't* see, the plugin prepends a small, themed **badge** (e.g. `⚠ gogatoz`) to the `status-right` of every **other** session you're attached to, and sends that session an immediate bell + a `Claude needs input in <session>:<window>` status message. So when you're heads-down in session `A` and Claude in session `B` needs you, session `A`'s bar tells you. The badge is *non-destructive*: it never touches your `status-style`, so your themed bar stays intact, and your original `status-right` is saved and restored exactly.
 
-When you submit your next prompt (`UserPromptSubmit`), the plugin reverts everything it changed — but a session you're viewing **stays** alerted as long as *some other* session is still waiting, so a second waiting session is never silently dropped.
+The alert clears when you respond (`UserPromptSubmit`) **and** at the end of every turn (`Stop`) — but a session you're viewing **stays** alerted as long as *some other* session is still waiting, so a second waiting session is never silently dropped. Clearing on `Stop` is what makes it **self-healing**: a pane you're actively working in drops its "waiting" marker at the end of each turn, so a stray `Notification` (for example a permission prompt you approved without sending a message) can't leave a stale marker that pins another session's bar red. A genuine idle wait re-marks itself, since its `Notification` fires *after* `Stop`.
 
 > **Note:** the window flash (level 1) is most visible when you are *not* currently looking at that tmux window — tmux's `window-status-current-style` overrides `window-status-style` on the active window. The cross-session alert (level 2) is the opposite: it is designed for exactly the session you *are* looking at, because that's where you'll see it.
 
@@ -107,7 +107,7 @@ The hook scripts honor these environment variables, exported in your shell rc:
 | Variable | Default | Effect |
 |---|---|---|
 | `CLAUDE_TMUX_FLASH_STYLE` | `bg=red,fg=white,bold` | Style for the **window** flash (level 1). Any tmux style string — e.g. `bg=yellow,fg=black`, `bg=magenta,fg=white,blink`. |
-| `CLAUDE_TMUX_REMOTE_STYLE` | (same as `CLAUDE_TMUX_FLASH_STYLE`) | Style applied to **another session's** status bar (level 2). Set it different from the window flash if you want to tell the two apart. |
+| `CLAUDE_TMUX_REMOTE_STYLE` | (same as `CLAUDE_TMUX_FLASH_STYLE`) | Style for the cross-session **badge** prepended to another session's `status-right` (level 2). Any tmux style string. Set it different from the window flash if you want to tell the two apart. |
 | `CLAUDE_TMUX_FLASH_BELL` | `1` | Set to `0` to suppress all bells. |
 | `CLAUDE_TMUX_CROSS_SESSION` | `1` | Set to `0` to disable cross-session alerts entirely (keeps the within-session window flash). |
 | `CLAUDE_TMUX_STATE_DIR` | `$XDG_RUNTIME_DIR/claude-code-tmux` (falls back to `$TMPDIR`/`/tmp`) | Where the small "which sessions are waiting" markers live. |
@@ -133,8 +133,10 @@ Both hooks share `hooks/lib.sh` and are no-ops when `$TMUX_PANE` is unset (i.e. 
 
 - **Notification hook → `hooks/flash-on.sh`**
   - *Level 1:* `tmux set-window-option` against `$TMUX_PANE` (tmux resolves a pane id to its parent window for window-scoped options), then writes `\a` to the pane's tty so tmux's bell monitor fires.
-  - *Level 2:* records this pane in a small marker dir (`CLAUDE_TMUX_STATE_DIR`), then **reconciles**: every session that is *not* itself waiting but has *another* waiting session gets its `status-style` set to the remote style (its prior value is saved for exact restore). It also sends an immediate bell + `display-message` to any attached client viewing a different session.
-- **UserPromptSubmit hook → `hooks/flash-off.sh`** unsets the window options, removes this pane's marker, and reconciles again.
+  - *Level 2:* records this pane in a small marker dir (`CLAUDE_TMUX_STATE_DIR`), then **reconciles**: every session that is *not* itself waiting but has *another* waiting session gets a badge prepended to its `status-right` (its prior `status-right` is saved for an exact restore; the badge is rebuilt from that saved baseline each time, so it never stacks). It also sends an immediate bell + `display-message` to any attached client viewing a different session.
+- **UserPromptSubmit + Stop hooks → `hooks/flash-off.sh`** unset the window options, remove this pane's marker, and reconcile again. The same script is wired to both events: `UserPromptSubmit` (you replied) and `Stop` (the turn ended).
+
+**Why also clear on `Stop`?** A `Notification` marks a pane "waiting", but it fires for permission prompts too — which you clear by approving, not by submitting a prompt. Without a second clear signal, that marker would linger until your next prompt in that exact pane, and two lingering markers in different sessions deadlock both bars. Clearing on `Stop` drops the marker at the end of every turn, so an actively-working pane never stays flagged; a real idle wait simply re-marks itself, because its `Notification` arrives *after* `Stop`.
 
 **Why a marker dir instead of just toggling on/off?** With two or more sessions waiting at once, answering one must not clear the alert on a session that can still see *another* waiting session. Reconcile recomputes each session's indicator from the full set of waiting panes every time, so the alert persists exactly as long as something is still waiting, and markers whose pane has since disappeared are reaped automatically.
 
@@ -153,12 +155,14 @@ Then check that the plugin is enabled in `/plugin`. Some Claude Code builds only
 
 **Bell doesn't appear.** Your tmux build may suppress bells; confirm `set -g bell-action any` (or `other`) is in your `tmux.conf`, and that `monitor-bell` is on (the plugin sets it, but you can verify with `tmux show-window-options monitor-bell`).
 
-**Another session's bar stays flashed.** It clears when you submit a prompt in the waiting session. If Claude was dismissed another way (e.g. you approved a permission prompt without sending a message, or killed Claude leaving the pane at a shell), its marker can linger. Reset state with:
+**Another session's bar stays badged.** It clears when you submit a prompt in the waiting session, and the `Stop` hook clears an actively-working pane at the end of each turn — so this should self-heal. It can still linger if Claude was killed mid-turn leaving the pane at a shell (no `Stop` fires, and the pane still exists so its marker isn't reaped). Reset state with:
 
 ```bash
 rm -rf "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/claude-code-tmux"
-tmux set-option -u -t <session> status-style   # for any session still tinted
+tmux set-option -u -t <session> status-right   # for any session still badged
 ```
+
+If you're upgrading from a version before 0.3.0 (which restyled `status-style` instead of badging `status-right`) and a bar is stuck solid red, clear the old override too: `tmux set-option -u -t <session> status-style`.
 
 **I don't want cross-session alerts.** Set `export CLAUDE_TMUX_CROSS_SESSION=0`; the within-session window flash keeps working.
 
@@ -170,7 +174,7 @@ The hook logic has an integration test that spins up a throwaway tmux server (it
 bash tests/run.sh
 ```
 
-It covers the window flash, the cross-session status-bar flash, correct restore when multiple sessions wait at once, and stale-marker cleanup.
+It covers the window flash, the non-destructive cross-session `status-right` badge (including no-stacking and exact restore of a session's own override), the self-healing `Stop` path that breaks the two-session deadlock, correct restore when multiple sessions wait at once, and stale-marker cleanup.
 
 ## License
 

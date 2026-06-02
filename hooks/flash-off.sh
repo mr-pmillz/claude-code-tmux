@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# UserPromptSubmit hook: you responded, so this session is no longer waiting.
+# UserPromptSubmit + Stop hook: this session is no longer waiting on you.
+#
+# Wired to BOTH events: UserPromptSubmit (you replied) and Stop (the turn
+# ended). The Stop wiring is what keeps it self-healing — a pane you're
+# actively working in clears its waiting marker at the end of every turn, so a
+# Notification that wasn't followed by a prompt (e.g. a permission you approved)
+# can't leave a stale marker that deadlocks the cross-session bars. A genuine
+# idle wait re-marks itself, because its Notification fires *after* Stop.
 #
 #   Layer 1: restore this window's styling.
 #   Layer 2: drop this pane's waiting marker and reconcile cross-session
